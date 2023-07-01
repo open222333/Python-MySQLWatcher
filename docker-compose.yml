@@ -1,0 +1,5 @@
+version: '3'
+services:
+  mysql-watcher:
+    container_name: mysql-watcher
+    build: .
