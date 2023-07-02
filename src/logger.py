@@ -1,6 +1,4 @@
-from . import LOG_PATH, LOG_LEVEL, LOG_DISABLE, LOG_FILE_DISABLE, LOG_SIZE, LOG_DAYS
 from logging.handlers import TimedRotatingFileHandler, RotatingFileHandler
-from traceback import print_exc
 from datetime import datetime
 import logging
 import socket
@@ -190,60 +188,3 @@ class Log():
 
     def critical(self, message: str, exc_info: bool = False):
         self.logger.critical(message, exc_info=exc_info)
-
-
-try:
-    HOSTNAME = socket.gethostname()
-
-    log_setting = {
-        'LOG_PATH': LOG_PATH,
-        'LOG_DISABLE': LOG_DISABLE,
-        'LOG_FILE_DISABLE': LOG_FILE_DISABLE,
-        'LOG_LEVEL': LOG_LEVEL,
-        'LOG_SIZE': LOG_SIZE,
-        'LOG_DAYS': LOG_DAYS
-    }
-except Exception as err:
-    print_exc()
-
-# 建立log資料夾
-if not os.path.exists(LOG_PATH) and not LOG_DISABLE:
-    os.makedirs(LOG_PATH)
-
-if LOG_DISABLE:
-    logging.disable()
-else:
-    log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-    if LOG_SIZE:
-        log_file = f'{LOG_PATH}/{HOSTNAME}-mega.log'
-        if not LOG_FILE_DISABLE:
-            log_file_handler = RotatingFileHandler(f'logs/{log_file}.log', maxBytes=LOG_SIZE, backupCount=5)
-            log_file_handler.setFormatter(log_formatter)
-    else:
-        log_file = f'{LOG_PATH}/{datetime.now().__format__("%Y%m%d")}-{HOSTNAME}.log'
-        if not LOG_FILE_DISABLE:
-            log_file_handler = TimedRotatingFileHandler(log_file, when='D', backupCount=LOG_DAYS)
-            log_file_handler.setFormatter(log_formatter)
-
-    log_msg_handler = logging.StreamHandler()
-    log_msg_handler.setFormatter(log_formatter)
-
-    logger = logging.getLogger(HOSTNAME)
-
-    if LOG_LEVEL == 'DEBUG':
-        logger.setLevel(logging.DEBUG)
-    elif LOG_LEVEL == 'INFO':
-        logger.setLevel(logging.INFO)
-    elif LOG_LEVEL == 'WARNING':
-        logger.setLevel(logging.WARNING)
-    elif LOG_LEVEL == 'ERROR':
-        logger.setLevel(logging.ERROR)
-    elif LOG_LEVEL == 'CRITICAL':
-        logger.setLevel(logging.CRITICAL)
-
-    if not LOG_FILE_DISABLE:
-        logger.addHandler(log_file_handler)
-    logger.addHandler(log_msg_handler)
-
-    logger.debug(log_setting)

@@ -1,8 +1,15 @@
+from src import LOG_LEVEL, LOG_FILE_DISABLE, MYSQL_HOST, MYSQL_PORT, USERNAME, PASSWORD, DATABASE
 from src.logger import Log
-from src import LOG_LEVEL, MYSQL_HOST, MYSQL_PORT, USERNAME, PASSWORD, DATABASE
 from src.mysql import MySQLStatusWatcher
 from argparse import ArgumentParser
 import os
+
+watch_logger = Log()
+watch_logger.set_level(LOG_LEVEL)
+if not LOG_FILE_DISABLE:
+    watch_logger.set_file_handler()
+watch_logger.set_msg_handler()
+
 
 parser = ArgumentParser()
 parser.add_argument(
@@ -33,19 +40,15 @@ LOG_LEVEL = os.environ.get('LOG_LEVEL', LOG_LEVEL)
 TELEGRAM_API_KEY = os.environ.get('TELEGRAM_API_KEY')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
-logger = Log()
-logger.set_level(LOG_LEVEL)
-logger.set_msg_handler()
-
-
 if __name__ == '__main__':
     if args.log_level:
-        logger.set_level(args.log_level)
+        watch_logger.set_level(args.log_level)
 
     watcher = MySQLStatusWatcher(
         user=args.username,
         password=args.password,
-        database=args.database
+        database=args.database,
+        logger=watch_logger
     )
     if args.host:
         watcher.set_host(args.host)

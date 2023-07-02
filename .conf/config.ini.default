@@ -12,12 +12,6 @@
 ; 設定紀錄log等級 DEBUG,INFO,WARNING,ERROR,CRITICAL 預設WARNING
 ; LOG_LEVEL=
 
-; 指定log大小(輸入數字) 單位byte, 與 LOG_DAYS 只能輸入一項 若都輸入 LOG_SIZE優先
-; LOG_SIZE=
-
-; 指定保留log天數(輸入數字) 預設7
-; LOG_DAYS=
-
 [TELEGRAM]
 ; TELEGRAM_API_KEY=
 ; TELEGRAM_CHAT_ID=
