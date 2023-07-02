@@ -1,18 +1,31 @@
 from src.logger import Log
-from src import LOG_LEVEL
+from src import LOG_LEVEL, MYSQL_HOST, MYSQL_PORT, USERNAME, PASSWORD, DATABASE
 from src.mysql import MySQLStatusWatcher
 from argparse import ArgumentParser
 import os
 
 parser = ArgumentParser()
-parser.add_argument('-u', '--username', type=str, help='mysql帳號', required=True)
-parser.add_argument('-p', '--password', type=str, help='mysql密碼', required=True)
-parser.add_argument('-d', '--database', type=str, help='mysql 資料庫', required=True)
-parser.add_argument('-h', '--host', type=str, help='mysql主機')
-parser.add_argument('-P', '--port', type=int, help='mysql port')
-parser.add_argument('-s', '--sleep_sec', type=int, help='設定間隔時間')
-parser.add_argument('-l', '--log_level', type=str, help='設定紀錄log等級 DEBUG,INFO,WARNING,ERROR,CRITICAL 預設WARNING',
-                    choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'])
+parser.add_argument(
+    '-u', '--username', type=str,
+    help='mysql帳號', required=False, default=USERNAME)
+parser.add_argument(
+    '-p', '--password', type=str,
+    help='mysql密碼', required=False, default=PASSWORD)
+parser.add_argument(
+    '-d', '--database', type=str,
+    help='mysql 資料庫', required=False, default=DATABASE)
+parser.add_argument(
+    '-H', '--host', type=str,
+    help='mysql主機', required=False, default=MYSQL_HOST)
+parser.add_argument(
+    '-P', '--port', type=int,
+    help='mysql port', required=False, default=MYSQL_PORT)
+parser.add_argument('-s', '--sleep_sec', type=int, help='設定間隔時間', required=False)
+parser.add_argument(
+    '-l', '--log_level', type=str,
+    help='設定紀錄log等級 DEBUG,INFO,WARNING,ERROR,CRITICAL 預設WARNING',
+    choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], required=False
+)
 args = parser.parse_args()
 
 

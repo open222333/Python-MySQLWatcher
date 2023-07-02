@@ -30,6 +30,7 @@ class MySQLStatusWatcher():
             'password': password,
             'database': database
         }
+        logger.debug(f'mysql連線設定:\n{self.config}')
         self.sleep_sec = 10
 
     def set_telegram_info(self, api_key: str, chat_id: str):
@@ -104,7 +105,10 @@ class MySQLStatusWatcher():
     def run(self):
         while True:
             status = self.get_slave_status()
-            if status == None:
-                msg = f'主機: {socket.gethostname()}\nMaster_Log_File:{status["Master_Log_File"]}\Read_Master_Log_Pos: {status["Read_Master_Log_Pos"]}\nSlave_IO_Running: {status["Slave_IO_Running"]}\nSlave_SQL_Running: {status["Slave_SQL_Running"]}'
+            hostname = socket.gethostname()
+            if status != None:
+                msg = f'主機: {hostname}\nMaster_Log_File:{status["Master_Log_File"]}\Read_Master_Log_Pos: {status["Read_Master_Log_Pos"]}\nSlave_IO_Running: {status["Slave_IO_Running"]}\nSlave_SQL_Running: {status["Slave_SQL_Running"]}'
                 self.send_tg_message(msg)
+            else:
+                self.send_tg_message(f'{hostname} mysql 無可用的slave狀態資訊')
             sleep(self.sleep_sec)
