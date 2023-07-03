@@ -1,16 +1,16 @@
-import socket
-import pymysql
-from time import sleep
-from typing import Union
 from . import TELEGRAM_API_KEY, TELEGRAM_CHAT_ID
 from .tool import get_time_int_str
 from .telegram import send_tg_message
 from .logger import Log
+from typing import Union
+from time import sleep
+import pymysql
+import socket
 
 
 class MySQLStatusWatcher():
 
-    def __init__(self, user: str, password: str, database: str, logger: Log, host: str = '127.0.0.1', port: int = 3306) -> None:
+    def __init__(self, user: str, password: str, database: str, logger: Log, ip: str = '127.0.0.1', port: int = 3306) -> None:
         """mysql 狀態 監控程式
 
         Args:
@@ -18,11 +18,11 @@ class MySQLStatusWatcher():
             password (str): mysql密碼
             database (str): 資料庫
             logger (logging): 紀錄log
-            host (str, optional): 連線主機. Defaults to '127.0.0.1'.
+            ip (str, optional): 連線主機. Defaults to '127.0.0.1'.
             port (int, optional): 連線port. Defaults to 3306.
         """        # MySQL 連線設定
         self.config = {
-            'host': host,
+            'host': ip,
             'port': port,
             'user': user,
             'password': password,
@@ -30,6 +30,7 @@ class MySQLStatusWatcher():
         }
         self.sleep_sec = 10
         self.logger = logger
+        self.hostname = socket.gethostname()
 
     def set_telegram_info(self, api_key: str, chat_id: str):
         """設定tg相關參數
@@ -40,6 +41,14 @@ class MySQLStatusWatcher():
         """
         self.telegram_api_key = api_key
         self.telegram_chat_id = chat_id
+
+    def set_hostname(self, hostname: str):
+        """設置顯示主機名稱
+
+        Args:
+            hostname (str): 主機名稱
+        """
+        self.hostname = hostname
 
     def set_host(self, host: str):
         """設置mysql連線主機
@@ -85,7 +94,7 @@ class MySQLStatusWatcher():
             else:
                 return None
         except pymysql.err.OperationalError as err:
-            self.logger.error(f'主機連線異常 錯誤代碼 {err.args[0]}: {err.args[1]}')
+            self.logger.error(f'{self.hostname} 主機連線異常 錯誤代碼 {err.args[0]}: {err.args[1]}')
         except Exception as err:
             self.logger.error(err, exc_info=True)
 
@@ -94,11 +103,10 @@ class MySQLStatusWatcher():
         while True:
             try:
                 status = self.get_slave_status()
-                hostname = socket.gethostname()
                 if status != None:
                     slave_io_running = status["Slave_IO_Running"]
                     slave_sql_running = status["Slave_SQL_Running"]
-                    msg = f'\n主機 {hostname}:\nSlave_IO_Running: {slave_io_running}\nSlave_SQL_Running: {slave_sql_running}'
+                    msg = f'\n{self.hostname}:\nSlave_IO_Running: {slave_io_running}\nSlave_SQL_Running: {slave_sql_running}'
                     if slave_io_running == 'Yes' and slave_sql_running == 'Yes':
                         if flag != 'normal':
                             flag = 'normal'
@@ -114,11 +122,11 @@ class MySQLStatusWatcher():
                 else:
                     if flag != 'error':
                         flag = 'error'
-                        msg = f'主機 {hostname}: MySQL slave狀態異常'
+                        msg = f'{self.hostname}: MySQL slave狀態異常'
                         self.logger.error(msg)
                         if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                             send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
-                self.logger.debug(f'監控間隔時間: {get_time_int_str(self.sleep_sec)}')
+                self.logger.debug(f'{self.hostname} 監控間隔時間: {get_time_int_str(self.sleep_sec)}')
                 sleep(self.sleep_sec)
             except Exception as err:
                 self.logger.error(err, exc_info=True)

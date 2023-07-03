@@ -1,9 +1,10 @@
 
+from .telegram import get_chat_id
 from configparser import ConfigParser
 import logging
+import json
 import os
-from .telegram import get_chat_id
-from .logger import Log
+
 
 conf = ConfigParser()
 conf.read('.conf/config.ini', encoding='utf-8')
@@ -23,11 +24,8 @@ TELEGRAM_API_KEY = conf.get('TELEGRAM', 'TELEGRAM_API_KEY', fallback=None)
 if TELEGRAM_API_KEY:
     TELEGRAM_CHAT_ID = conf.get('TELEGRAM', 'TELEGRAM_CHAT_ID', fallback=get_chat_id(TELEGRAM_API_KEY))
 
-MYSQL_HOST = conf.get('MYSQL', 'MYSQL_HOST', fallback='127.0.0.1')
-MYSQL_PORT = conf.getint('MYSQL', 'MYSQL_PORT', fallback=3306)
-USERNAME = conf.get('MYSQL', 'USERNAME', fallback=None)
-PASSWORD = conf.get('MYSQL', 'PASSWORD', fallback=None)
-DATABASE = conf.get('MYSQL', 'DATABASE', fallback=None)
+with open('.conf/host.json') as file:
+    HOSTS = json.load(file)
 
 # 建立log資料夾
 if not os.path.exists(LOG_PATH) and not LOG_DISABLE:
