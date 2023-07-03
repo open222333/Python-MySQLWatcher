@@ -84,29 +84,40 @@ class MySQLStatusWatcher():
                 return status
             else:
                 return None
+        except pymysql.err.OperationalError as err:
+            self.logger.error(f'主機連線異常 錯誤代碼 {err.args[0]}: {err.args[1]}')
         except Exception as err:
             self.logger.error(err, exc_info=True)
 
     def run(self):
-        is_sended = False
+        flag = 'first'
         while True:
             try:
                 status = self.get_slave_status()
                 hostname = socket.gethostname()
                 if status != None:
-                    if not is_sended:
-                        msg = f'主機 {hostname}:\nMaster_Log_File:{status["Master_Log_File"]}\Read_Master_Log_Pos: {status["Read_Master_Log_Pos"]}\nSlave_IO_Running: {status["Slave_IO_Running"]}\nSlave_SQL_Running: {status["Slave_SQL_Running"]}'
-                        self.logger.info(msg)
-                        if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
-                            send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
-                            is_sended = False
+                    slave_io_running = status["Slave_IO_Running"]
+                    slave_sql_running = status["Slave_SQL_Running"]
+                    msg = f'\n主機 {hostname}:\nSlave_IO_Running: {slave_io_running}\nSlave_SQL_Running: {slave_sql_running}'
+                    if slave_io_running == 'Yes' and slave_sql_running == 'Yes':
+                        if flag != 'normal':
+                            flag = 'normal'
+                            self.logger.info(msg)
+                            if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
+                                send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
+                    else:
+                        if flag != 'error-no-running':
+                            flag = 'error-no-running'
+                            self.logger.info(msg)
+                            if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
+                                send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
                 else:
-                    if not is_sended:
+                    if flag != 'error':
+                        flag = 'error'
                         msg = f'主機 {hostname}: MySQL slave狀態異常'
                         self.logger.error(msg)
                         if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                             send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
-                            is_sended = True
                 self.logger.debug(f'監控間隔時間: {get_time_int_str(self.sleep_sec)}')
                 sleep(self.sleep_sec)
             except Exception as err:
