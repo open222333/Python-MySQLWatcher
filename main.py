@@ -25,7 +25,7 @@ if __name__ == '__main__':
         watch_logger.set_level(args.log_level)
 
     for host in HOSTS:
-
+        watch_logger.info(f'\n主機資訊:\n{host["hostname"]}-{host["ip"]}:{host["port"]}\n{host["username"]}')
         watcher = MySQLStatusWatcher(
             ip=host['ip'],
             port=host['port'],
