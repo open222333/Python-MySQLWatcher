@@ -4,4 +4,5 @@ services:
     container_name: mysql-watcher
     image: mysql-watcher
     build: .
-    command: bash -c "python main.py -l DEBUG"
+    command: bash -c "python main.py"
+    restart: always
