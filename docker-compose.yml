@@ -6,3 +6,5 @@ services:
     build: .
     command: bash -c "python main.py"
     restart: always
+    volumes:
+      - .conf:/usr/src/app/.conf
