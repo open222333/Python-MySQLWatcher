@@ -15,3 +15,7 @@
 [TELEGRAM]
 ; TELEGRAM_API_KEY=
 ; TELEGRAM_CHAT_ID=
+
+[HOST_SETTING]
+; 主機相關設定json檔路徑 預設 .conf/host.json
+; HOST_JSON_PATH=

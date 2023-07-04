@@ -122,7 +122,7 @@ class MySQLStatusWatcher():
                 else:
                     if flag != 'error':
                         flag = 'error'
-                        msg = f'{self.hostname}: MySQL slave狀態異常'
+                        msg = f'{self.hostname}: MySQL slave同步異常'
                         self.logger.error(msg)
                         if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                             send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
