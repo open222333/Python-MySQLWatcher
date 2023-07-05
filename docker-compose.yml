@@ -8,3 +8,4 @@ services:
     restart: always
     volumes:
       - .conf:/usr/src/app/.conf
+    network_mode: host

@@ -106,7 +106,7 @@ class MySQLStatusWatcher():
                 if status != None:
                     slave_io_running = status["Slave_IO_Running"]
                     slave_sql_running = status["Slave_SQL_Running"]
-                    msg = f'\n{self.hostname}:\nSlave_IO_Running: {slave_io_running}\nSlave_SQL_Running: {slave_sql_running}'
+                    msg = f'\n{self.hostname}  slave同步狀態:\nSlave_IO_Running: {slave_io_running}\nSlave_SQL_Running: {slave_sql_running}'
                     if slave_io_running == 'Yes' and slave_sql_running == 'Yes':
                         if flag != 'normal':
                             flag = 'normal'
