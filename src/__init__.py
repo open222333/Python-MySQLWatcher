@@ -24,6 +24,8 @@ TELEGRAM_API_KEY = conf.get('TELEGRAM', 'TELEGRAM_API_KEY', fallback=None)
 if TELEGRAM_API_KEY:
     TELEGRAM_CHAT_ID = conf.get('TELEGRAM', 'TELEGRAM_CHAT_ID', fallback=get_chat_id(TELEGRAM_API_KEY))
 
+MONITORING_INTERVAL = conf.getint('HOST_SETTING', 'MONITORING_INTERVAL', fallback=10)
+
 HOST_JSON_PATH = conf.get('HOST_SETTING', 'HOST_JSON_PATH', fallback='.conf/host.json')
 with open(HOST_JSON_PATH) as file:
     HOSTS = json.load(file)

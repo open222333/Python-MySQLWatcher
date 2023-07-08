@@ -19,3 +19,5 @@
 [HOST_SETTING]
 ; 主機相關設定json檔路徑 預設 .conf/host.json
 ; HOST_JSON_PATH=
+; 監控間隔時間 單位：秒 預設 10秒
+; MONITORING_INTERVAL=

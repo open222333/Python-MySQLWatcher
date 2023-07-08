@@ -1,4 +1,4 @@
-from src import LOG_LEVEL, LOG_FILE_DISABLE, HOSTS
+from src import LOG_LEVEL, LOG_FILE_DISABLE, HOSTS, MONITORING_INTERVAL
 from src.logger import Log
 from src.mysql import MySQLStatusWatcher
 from argparse import ArgumentParser
@@ -38,5 +38,7 @@ if __name__ == '__main__':
         watcher.set_hostname(host['hostname'])
         if args.sleep_sec:
             watcher.set_sleep_sec(args.sleep_sec)
+        if MONITORING_INTERVAL != 10:
+            watcher.set_sleep_sec(MONITORING_INTERVAL)
 
         threading.Thread(target=watcher.run).start()
