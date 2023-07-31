@@ -99,7 +99,7 @@ class MySQLStatusWatcher():
             self.logger.error(err, exc_info=True)
 
     def run(self):
-        flag = 'first'
+        flag = 'initial'
         while True:
             try:
                 status = self.get_slave_status()
@@ -110,6 +110,18 @@ class MySQLStatusWatcher():
                     if slave_io_running == 'Yes' and slave_sql_running == 'Yes':
                         if flag != 'normal':
                             flag = 'normal'
+                            self.logger.info(msg)
+                            if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
+                                send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
+                    if slave_io_running == 'No' and slave_sql_running == 'Yes':
+                        if flag != 'error-slave-IO-running':
+                            flag = 'error-slave-IO-running'
+                            self.logger.info(msg)
+                            if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
+                                send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
+                    if slave_io_running == 'Yes' and slave_sql_running == 'No':
+                        if flag != 'error-slave-SQL-running':
+                            flag = 'error-slave-SQL-running'
                             self.logger.info(msg)
                             if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                                 send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
