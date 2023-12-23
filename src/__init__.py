@@ -1,4 +1,3 @@
-
 from .telegram import get_chat_id
 from configparser import ConfigParser
 import logging
@@ -7,7 +6,7 @@ import os
 
 
 conf = ConfigParser()
-conf.read('.conf/config.ini', encoding='utf-8')
+conf.read(os.path.join('conf', 'config.ini'), encoding='utf-8')
 
 
 # logs相關參數
