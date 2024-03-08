@@ -35,35 +35,35 @@ class MysqlConnect():
         if self.logger == None:
             self.logger = logging.getLogger('MongoConnect')
 
-        self.name: kwargs.get('name', '未命名 mysql 連線')
+        self.name = kwargs.get('name', '未命名 mysql 連線')
 
         # mysql 連線設定
+        self.set_setting(**kwargs)
+
+    def set_setting(self, **kwargs):
         self.setting = {
             'host': kwargs.get('host', '127.0.0.1'),
             'port': int(kwargs.get('port', 3306)),
             'database': kwargs.get('database'),
-            'username': kwargs.get('username'),
+            'user': kwargs.get('username'),
             'password': kwargs.get('password'),
             'charset': kwargs.get('charset', 'utf8mb4'),
             'autocommit': bool(kwargs.get('autocommit', True)),
             'cursorclass': kwargs.get('cursorclass', DictCursor)
         }
 
-    def __call__(self, **kwds):
-        return self.get_mysql_connect(kwds)
-
-    def get_mysql_connect(self, **kwargs) -> Connection:
+    def get_mysql_connect(self) -> Connection:
         """取得 mysql 連線
 
         Returns:
             _type_: _description_
         """
         try:
-            mysql_connect = pymysql.connect(**kwargs)
-            self.logger.debug(f'取得 mysql_connect - {self.name}\n設定:\n{pformat(kwargs, sort_dicts=False)}')
+            mysql_connect = pymysql.connect(**self.setting)
+            self.logger.debug(f'取得 mysql_connect - {self.name}\n設定:\n{pformat(self.setting, sort_dicts=False)}')
             return mysql_connect
         except Exception as err:
-            self.logger.error(f'取得 mysql 連線 - {self.name} 發生錯誤: {err}\n設定:\n{pformat(kwargs, sort_dicts=False)}', exc_info=True)
+            self.logger.error(f'取得 mysql 連線 - {self.name} 發生錯誤: {err}\n設定:\n{pformat(self.setting, sort_dicts=False)}', exc_info=True)
 
     def get_mysql_setting(self):
         return self.setting
@@ -127,6 +127,8 @@ class MySQLSetting():
 
 class MySQLStatusWatcher(MySQLSetting):
 
+    flag = 'initial'
+
     def __init__(self, user: str, password: str, database: str, ip: str = '127.0.0.1', port: int = 3306, **kwargs) -> None:
         super().__init__(user, password, database, ip, port, **kwargs)
         self.logger = kwargs.get('logger')
@@ -141,16 +143,19 @@ class MySQLStatusWatcher(MySQLSetting):
         """
         try:
             # conn = pymysql.connect(**self.config)
-            conn = MysqlConnect(**self.config)
+            conn = MysqlConnect(**self.config).get_mysql_connect()
             cursor = conn.cursor()
             cursor.execute("SHOW SLAVE STATUS")
             result = cursor.fetchone()
+            # self.logger.debug(f'get_slave_status result: {result}')
+            # self.logger.debug(f'get_slave_status result type: {type(result)}')
             cursor.close()
             conn.close()
             if result is not None:
-                fields = [field[0] for field in cursor.description]
-                status = dict(zip(fields, result))
-                return status
+                # fields = [field[0] for field in cursor.description]
+                # status = dict(zip(fields, result))
+                # return status
+                return result
             else:
                 return None
         except pymysql.err.OperationalError as err:
@@ -159,41 +164,42 @@ class MySQLStatusWatcher(MySQLSetting):
             self.logger.error(err, exc_info=True)
 
     def run(self):
-        flag = 'initial'
         while True:
             try:
                 status = self.get_slave_status()
+                # self.logger.debug(f'status: {status}')
+                self.logger.debug(f'\nflag: {self.flag}\nstatus: {status}')
                 if status != None:
                     slave_io_running = status["Slave_IO_Running"]
                     slave_sql_running = status["Slave_SQL_Running"]
                     msg = f'\n{self.hostname}  slave同步狀態:\nSlave_IO_Running: {slave_io_running}\nSlave_SQL_Running: {slave_sql_running}'
                     if slave_io_running == 'Yes' and slave_sql_running == 'Yes':
-                        if flag != 'normal':
-                            flag = 'normal'
+                        if self.flag != 'normal':
+                            self.flag = 'normal'
                             self.logger.info(msg)
                             if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                                 send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
-                    if slave_io_running == 'No' and slave_sql_running == 'Yes':
-                        if flag != 'error-slave-IO-running':
-                            flag = 'error-slave-IO-running'
+                    elif slave_io_running == 'No' and slave_sql_running == 'Yes':
+                        if self.flag != 'error-slave-IO-running':
+                            self.flag = 'error-slave-IO-running'
                             self.logger.info(msg)
                             if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                                 send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
-                    if slave_io_running == 'Yes' and slave_sql_running == 'No':
-                        if flag != 'error-slave-SQL-running':
-                            flag = 'error-slave-SQL-running'
+                    elif slave_io_running == 'Yes' and slave_sql_running == 'No':
+                        if self.flag != 'error-slave-SQL-running':
+                            self.flag = 'error-slave-SQL-running'
                             self.logger.info(msg)
                             if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                                 send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
                     else:
-                        if flag != 'error-no-running':
-                            flag = 'error-no-running'
+                        if self.flag != 'error-no-running':
+                            self.flag = 'error-no-running'
                             self.logger.info(msg)
                             if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                                 send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
                 else:
-                    if flag != 'error':
-                        flag = 'error'
+                    if self.flag != 'error':
+                        self.flag = 'error'
                         msg = f'{self.hostname}: MySQL slave同步異常'
                         self.logger.error(msg)
                         if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
@@ -206,6 +212,8 @@ class MySQLStatusWatcher(MySQLSetting):
 
 
 class MySQLClusterWatch(MySQLSetting):
+
+    flag = 'initial'
 
     def __init__(self, user: str, password: str, database: str, ip: str = '127.0.0.1', port: int = 3306, **kwargs) -> None:
         super().__init__(user, password, database, ip, port, **kwargs)
@@ -233,7 +241,7 @@ class MySQLClusterWatch(MySQLSetting):
                 self.logger.info(f'{connection.name} MySQL connection closed')
 
     def run(self):
-        flag = 'initial'
+
         while True:
             try:
                 cluster_status = self.get_cluster_status()

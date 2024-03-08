@@ -2,10 +2,12 @@ version: '3'
 services:
   mysql-watcher:
     container_name: mysql-watcher
+    hostname: mysql-watcher
     image: mysql-watcher
     build: .
     command: bash -c "python main.py"
     restart: always
     volumes:
-      - .conf:/usr/src/app/.conf
+      - .:/usr/src/app
+      # - ./conf:/usr/src/app/conf
     network_mode: host
