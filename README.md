@@ -40,7 +40,9 @@ Python-MySQLWatcher/
 └── src/
     ├── __init__.py         # 讀取設定（LOG_LEVEL、HOSTS、MONITORING_INTERVAL 等）
     ├── logger.py           # 日誌模組
-    └── mysql.py            # MySQLStatusWatcher、MySQLClusterWatch 監控核心
+    ├── mysql.py            # MySQLStatusWatcher、MySQLClusterWatch 監控核心
+    ├── telegram.py         # Telegram Bot 通知模組
+    └── tool.py             # 工具函式（時間格式等）
 ```
 
 ---
