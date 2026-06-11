@@ -134,30 +134,52 @@ class MySQLStatusWatcher(MySQLSetting):
         self.logger = kwargs.get('logger')
         if self.logger == None:
             self.logger = logging.getLogger('MySQLStatusWatcher')
+        self._mysql_version = None
 
-    def get_slave_status(self) -> Union[dict, None]:
-        """取得 mysql slave狀態
-
-        Returns:
-            Union[dict, None]: 若無slave回傳None
-        """
+    def _fetch_mysql_version(self) -> tuple:
+        """查詢 MySQL 版本號，回傳 (major, minor, patch) tuple"""
         try:
-            # conn = pymysql.connect(**self.config)
             conn = MysqlConnect(**self.config).get_mysql_connect()
             cursor = conn.cursor()
-            cursor.execute("SHOW SLAVE STATUS")
-            result = cursor.fetchone()
-            # self.logger.debug(f'get_slave_status result: {result}')
-            # self.logger.debug(f'get_slave_status result type: {type(result)}')
+            cursor.execute("SELECT VERSION()")
+            row = cursor.fetchone()
             cursor.close()
             conn.close()
-            if result is not None:
-                # fields = [field[0] for field in cursor.description]
-                # status = dict(zip(fields, result))
-                # return status
-                return result
+            version_str = list(row.values())[0].split("-")[0]
+            return tuple(int(p) for p in version_str.split(".")[:3])
+        except Exception as err:
+            self.logger.error(f'{self.hostname} 取得 MySQL 版本失敗: {err}', exc_info=True)
+            return (0, 0, 0)
+
+    @property
+    def mysql_version(self) -> tuple:
+        """取得 MySQL 版本（快取，只查一次）"""
+        if self._mysql_version is None:
+            self._mysql_version = self._fetch_mysql_version()
+            ver_str = ".".join(str(v) for v in self._mysql_version)
+            self.logger.info(f'{self.hostname} MySQL 版本: {ver_str}')
+        return self._mysql_version
+
+    def get_slave_status(self) -> Union[dict, None]:
+        """取得 replica/slave 狀態，依版本使用對應指令
+
+        MySQL >= 8.4 使用 SHOW REPLICA STATUS
+        舊版使用 SHOW SLAVE STATUS
+
+        Returns:
+            Union[dict, None]: 若無 replica/slave 回傳 None
+        """
+        try:
+            conn = MysqlConnect(**self.config).get_mysql_connect()
+            cursor = conn.cursor()
+            if self.mysql_version >= (8, 4, 0):
+                cursor.execute("SHOW REPLICA STATUS")
             else:
-                return None
+                cursor.execute("SHOW SLAVE STATUS")
+            result = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            return result if result is not None else None
         except pymysql.err.OperationalError as err:
             self.logger.error(f'{self.hostname} 主機連線異常 錯誤代碼 {err.args[0]}: {err.args[1]}')
         except Exception as err:
@@ -167,27 +189,30 @@ class MySQLStatusWatcher(MySQLSetting):
         while True:
             try:
                 status = self.get_slave_status()
-                # self.logger.debug(f'status: {status}')
                 self.logger.debug(f'\nflag: {self.flag}\nstatus: {status}')
                 if status != None:
-                    slave_io_running = status["Slave_IO_Running"]
-                    slave_sql_running = status["Slave_SQL_Running"]
-                    msg = f'\n{self.hostname}  slave同步狀態:\nSlave_IO_Running: {slave_io_running}\nSlave_SQL_Running: {slave_sql_running}'
-                    if slave_io_running == 'Yes' and slave_sql_running == 'Yes':
+                    if self.mysql_version >= (8, 4, 0):
+                        io_running = status.get("Replica_IO_Running")
+                        sql_running = status.get("Replica_SQL_Running")
+                    else:
+                        io_running = status.get("Slave_IO_Running")
+                        sql_running = status.get("Slave_SQL_Running")
+                    msg = f'\n{self.hostname}  replica同步狀態:\nIO_Running: {io_running}\nSQL_Running: {sql_running}'
+                    if io_running == 'Yes' and sql_running == 'Yes':
                         if self.flag != 'normal':
                             self.flag = 'normal'
                             self.logger.info(msg)
                             if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                                 send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
-                    elif slave_io_running == 'No' and slave_sql_running == 'Yes':
-                        if self.flag != 'error-slave-IO-running':
-                            self.flag = 'error-slave-IO-running'
+                    elif io_running == 'No' and sql_running == 'Yes':
+                        if self.flag != 'error-IO-running':
+                            self.flag = 'error-IO-running'
                             self.logger.info(msg)
                             if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                                 send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
-                    elif slave_io_running == 'Yes' and slave_sql_running == 'No':
-                        if self.flag != 'error-slave-SQL-running':
-                            self.flag = 'error-slave-SQL-running'
+                    elif io_running == 'Yes' and sql_running == 'No':
+                        if self.flag != 'error-SQL-running':
+                            self.flag = 'error-SQL-running'
                             self.logger.info(msg)
                             if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                                 send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
@@ -200,7 +225,7 @@ class MySQLStatusWatcher(MySQLSetting):
                 else:
                     if self.flag != 'error':
                         self.flag = 'error'
-                        msg = f'{self.hostname}: MySQL slave同步異常'
+                        msg = f'{self.hostname}: MySQL replica同步異常'
                         self.logger.error(msg)
                         if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
                             send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)

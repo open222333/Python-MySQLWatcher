@@ -66,12 +66,16 @@ Python-MySQLWatcher/
             |
             +--> watcher.run() 進入監控迴圈
                     |
-                    +--> 連線至 MySQL，執行 SHOW SLAVE STATUS
+                    +--> 執行 SELECT VERSION() 取得版本（快取，只查一次）
                     |
-                    +--> 檢查 Slave_IO_Running == 'Yes'？
+                    +--> 版本 >= 8.4？
+                    |       +--> 是 --> SHOW REPLICA STATUS（Replica_IO_Running / Replica_SQL_Running）
+                    |       +--> 否 --> SHOW SLAVE STATUS（Slave_IO_Running / Slave_SQL_Running）
+                    |
+                    +--> 檢查 IO_Running == 'Yes'？
                     |       +--> 否 --> 透過 Telegram Bot 發送告警
                     |
-                    +--> 檢查 Slave_SQL_Running == 'Yes'？
+                    +--> 檢查 SQL_Running == 'Yes'？
                     |       +--> 否 --> 透過 Telegram Bot 發送告警
                     |
                     +--> 等待 MONITORING_INTERVAL 秒後重複執行
