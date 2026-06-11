@@ -11,6 +11,7 @@
 - [執行流程](#執行流程)
 - [使用方法](#使用方法)
 - [設定檔說明](#設定檔說明)
+- [背景執行（不使用-docker）](#背景執行不使用-docker)
 - [建議注意事項](#建議注意事項)
 
 ---
@@ -219,6 +220,67 @@ options:
 | username | string | MySQL 使用者名稱                    |
 | password | string | MySQL 密碼                          |
 | database | string | 連線使用的資料庫，通常填 `mysql`    |
+
+---
+
+## 背景執行（不使用 Docker）
+
+### nohup（快速啟動）
+
+```bash
+# 背景執行，log 輸出至 nohup.out
+nohup python main.py -s 30 &
+
+# 背景執行，指定 log 導向自訂檔案
+nohup python main.py -s 30 >> logs/nohup.log 2>&1 &
+
+# 查看 PID
+echo $!
+
+# 停止
+kill <PID>
+```
+
+### systemd（伺服器長期運行）
+
+建立服務設定檔 `/etc/systemd/system/mysql-watcher.service`：
+
+```ini
+[Unit]
+Description=MySQL Watcher
+After=network.target
+
+[Service]
+Type=simple
+User=<執行使用者>
+WorkingDirectory=<專案絕對路徑>
+ExecStart=python main.py -s 30
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+# 重新載入設定
+sudo systemctl daemon-reload
+
+# 啟用開機自動啟動
+sudo systemctl enable mysql-watcher
+
+# 啟動服務
+sudo systemctl start mysql-watcher
+
+# 查看狀態
+sudo systemctl status mysql-watcher
+
+# 查看即時 log
+sudo journalctl -u mysql-watcher -f
+
+# 停止服務
+sudo systemctl stop mysql-watcher
+```
 
 ---
 
