@@ -297,3 +297,27 @@ sudo systemctl stop mysql-watcher
 - **Docker 時區** — 容器內預設時區可能與主機不同，若告警訊息時間顯示有誤，請在 `docker-compose.yml` 中設定 `TZ` 環境變數
 - **監控程式本身的穩定性** — 建議以 Docker restart policy（`restart: always`）或 systemd 確保監控程式本身不會中斷
 - **多台主機** — 每台主機以獨立執行緒運作，主機數量增加不影響各自的監控間隔準確性
+
+---
+
+## 疑難排解：為什麼會收到「MySQL replica同步異常」告警？
+
+`SHOW REPLICA/SLAVE STATUS` 查詢失敗（回傳 None）就會觸發此告警，可能原因包含（依常見程度排序）：
+
+1. **監控端 → DB 的網路層問題**：TCP 逾時、封包遺失、跨機房/跨境連線抖動、防火牆或安全群組規則變動、DNS 暫時解析失敗。
+2. **MySQL 連線資源問題**：`max_connections` 滿載、帳號因連續連線錯誤被暫時封鎖（需 `FLUSH HOSTS`）、監控帳號密碼過期或權限被異動。
+3. **MySQL 服務瞬斷**：套件更新／OOM Killer／資源不足造成 `mysqld` 重啟，或當時 CPU/IO 過載導致查詢逾時。
+4. **Replication 執行緒真的短暫中斷**：Master 端執行備份（`mysqldump`/`xtrabackup`）造成的鎖表、binlog rotate/purge、網路分斷造成 IO thread 重新連線。
+5. **監控程式本身的邏輯限制（已於本次優化修正，詳見下方）**：例外訊息未帶入告警內容、MySQL 版本快取失敗會被永久卡住、單一例外會讓該主機監控執行緒永久停止、單次瞬斷就會發送告警。
+
+若再次收到告警，可先查看監控程式的 log（`logs/` 目錄或 `docker compose logs -f`）取得詳細錯誤原因，再視情況檢查該台 MySQL 主機的 error log 與網路狀況。
+
+### 本次優化內容（`src/mysql.py`）
+
+- **告警內容加入實際錯誤原因**：查詢失敗時，Telegram 訊息會附上錯誤代碼/訊息，不再只顯示籠統的「同步異常」，方便事後追查。
+- **修正版本偵測快取陷阱**：原本第一次查詢 MySQL 版本若剛好連線失敗，會把 fallback 版本 `(0,0,0)` 永久快取，導致往後持續誤用錯誤指令。改為優先嘗試 `SHOW REPLICA STATUS`、失敗時自動 fallback `SHOW SLAVE STATUS`（並在下次查詢時自動重新偵測），不再依賴額外的版本查詢。
+- **加入延遲秒數與最後錯誤訊息**：若該版本有回傳 `Seconds_Behind_Master`/`Last_IO_Error`/`Last_SQL_Error`，會一併顯示在告警訊息中，避免只看到 `IO/SQL Running: Yes` 卻不知道實際延遲多久、上次錯誤是什麼。
+- **告警防抖（debounce）**：新增 `ANOMALY_THRESHOLD`（預設 2 次），需連續偵測到異常達門檻才會發送告警，避免單次網路瞬斷造成誤報與告警疲勞；改為 1 可還原成原本「偵測到一次就告警」的行為。
+- **監控執行緒不再因單一例外永久停止**：原本 `run()` 內未預期的例外會 `break` 離開迴圈，導致該主機從此不再被監控（且不會有任何提示）。修正為記錄錯誤後於下一輪繼續監控。
+- **連線加上逾時設定**：`connect_timeout`/`read_timeout`/`write_timeout` 預設 5 秒，避免 DB 無回應時監控執行緒被無限期卡住。
+- **修正 Cluster 模式（`MySQLClusterWatch`）的既有錯誤**：原本呼叫 `connection.is_connected()`（不存在於 `MysqlConnect`/PyMySQL）與 `cursor(dictionary=True)`（`mysql-connector-python` API，非 PyMySQL 語法），實際執行必定拋例外，已改用與 `MySQLStatusWatcher` 一致的連線方式修正。

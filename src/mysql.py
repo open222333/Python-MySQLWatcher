@@ -27,12 +27,15 @@ class MysqlConnect():
             charset: 預設 utf8mb4
             autocommit: 預設 True
             cursorclass: 預設 DictCursor
+            connect_timeout: 連線逾時秒數 預設 5
+            read_timeout: 讀取逾時秒數 預設 5
+            write_timeout: 寫入逾時秒數 預設 5
 
         Returns:
             _type_: _description_
         """
         self.logger = kwargs.get('logger')
-        if self.logger == None:
+        if self.logger is None:
             self.logger = logging.getLogger('MongoConnect')
 
         self.name = kwargs.get('name', '未命名 mysql 連線')
@@ -49,7 +52,12 @@ class MysqlConnect():
             'password': kwargs.get('password'),
             'charset': kwargs.get('charset', 'utf8mb4'),
             'autocommit': bool(kwargs.get('autocommit', True)),
-            'cursorclass': kwargs.get('cursorclass', DictCursor)
+            'cursorclass': kwargs.get('cursorclass', DictCursor),
+            # 連線/讀寫逾時：避免 DB 無回應（例如網路瞬斷、DB 過載）時
+            # 監控執行緒被無限期卡住而偵測不到異常
+            'connect_timeout': kwargs.get('connect_timeout', 5),
+            'read_timeout': kwargs.get('read_timeout', 5),
+            'write_timeout': kwargs.get('write_timeout', 5),
         }
 
     def get_mysql_connect(self) -> Connection:
@@ -64,6 +72,9 @@ class MysqlConnect():
             return mysql_connect
         except Exception as err:
             self.logger.error(f'取得 mysql 連線 - {self.name} 發生錯誤: {err}\n設定:\n{pformat(self.setting, sort_dicts=False)}', exc_info=True)
+            # 往上拋出真正的例外，讓呼叫端可以記錄/回報實際失敗原因，
+            # 而不是回傳 None 造成呼叫端出現誤導性的 'NoneType' 例外
+            raise
 
     def get_mysql_setting(self):
         return self.setting
@@ -92,7 +103,7 @@ class MySQLSetting():
         }
 
         self.logger = kwargs.get('logger')
-        if self.logger == None:
+        if self.logger is None:
             self.logger = logging.getLogger('MySQLSetting')
 
         self.sleep_sec = 10
@@ -129,111 +140,151 @@ class MySQLStatusWatcher(MySQLSetting):
 
     flag = 'initial'
 
+    # 依序嘗試的 replica 狀態查詢指令：
+    # MySQL >= 8.0.22 建議使用 SHOW REPLICA STATUS
+    # MySQL 8.4 起已移除 SHOW SLAVE STATUS，因此優先嘗試新指令，失敗時才 fallback
+    REPLICA_STATUS_COMMANDS = ('SHOW REPLICA STATUS', 'SHOW SLAVE STATUS')
+
+    # 連續異常達到此次數才發送告警（debounce），避免單次網路/DB瞬斷造成告警誤報。
+    # 設為 1 等同於原本「偵測到一次就告警」的行為。
+    ANOMALY_THRESHOLD = 2
+
     def __init__(self, user: str, password: str, database: str, ip: str = '127.0.0.1', port: int = 3306, **kwargs) -> None:
         super().__init__(user, password, database, ip, port, **kwargs)
         self.logger = kwargs.get('logger')
-        if self.logger == None:
+        if self.logger is None:
             self.logger = logging.getLogger('MySQLStatusWatcher')
-        self._mysql_version = None
+        # 快取「目前已知可用」的查詢指令，避免每次都要重新嘗試/多一次版本查詢；
+        # 若快取的指令執行失敗（例如版本升級/降級），會自動重新偵測，不會被永久卡住。
+        self._replica_command = None
+        self._consecutive_abnormal = 0
 
-    def _fetch_mysql_version(self) -> tuple:
-        """查詢 MySQL 版本號，回傳 (major, minor, patch) tuple"""
+    def _query_status(self, command: str) -> Union[dict, None]:
+        """實際執行一次狀態查詢指令，並確保連線一定會被關閉"""
+        conn = None
         try:
-            conn = MysqlConnect(**self.config).get_mysql_connect()
+            conn = MysqlConnect(**self.config, logger=self.logger, name=f'{self.hostname} replica status').get_mysql_connect()
             cursor = conn.cursor()
-            cursor.execute("SELECT VERSION()")
-            row = cursor.fetchone()
-            cursor.close()
-            conn.close()
-            version_str = list(row.values())[0].split("-")[0]
-            return tuple(int(p) for p in version_str.split(".")[:3])
-        except Exception as err:
-            self.logger.error(f'{self.hostname} 取得 MySQL 版本失敗: {err}', exc_info=True)
-            return (0, 0, 0)
+            cursor.execute(command)
+            return cursor.fetchone()
+        finally:
+            if conn is not None:
+                conn.close()
 
-    @property
-    def mysql_version(self) -> tuple:
-        """取得 MySQL 版本（快取，只查一次）"""
-        if self._mysql_version is None:
-            self._mysql_version = self._fetch_mysql_version()
-            ver_str = ".".join(str(v) for v in self._mysql_version)
-            self.logger.info(f'{self.hostname} MySQL 版本: {ver_str}')
-        return self._mysql_version
-
-    def get_slave_status(self) -> Union[dict, None]:
-        """取得 replica/slave 狀態，依版本使用對應指令
-
-        MySQL >= 8.4 使用 SHOW REPLICA STATUS
-        舊版使用 SHOW SLAVE STATUS
+    def get_slave_status(self) -> tuple:
+        """取得 replica/slave 狀態，自動依序嘗試相容的指令
 
         Returns:
-            Union[dict, None]: 若無 replica/slave 回傳 None
+            tuple: (status, error_detail)
+                status (dict|None): 查詢結果，查詢失敗或無 replica 設定時為 None
+                error_detail (str|None): 查詢失敗時的錯誤說明，方便寫入告警訊息追查原因
         """
-        try:
-            conn = MysqlConnect(**self.config).get_mysql_connect()
-            cursor = conn.cursor()
-            if self.mysql_version >= (8, 4, 0):
-                cursor.execute("SHOW REPLICA STATUS")
-            else:
-                cursor.execute("SHOW SLAVE STATUS")
-            result = cursor.fetchone()
-            cursor.close()
-            conn.close()
-            return result if result is not None else None
-        except pymysql.err.OperationalError as err:
-            self.logger.error(f'{self.hostname} 主機連線異常 錯誤代碼 {err.args[0]}: {err.args[1]}')
-        except Exception as err:
-            self.logger.error(err, exc_info=True)
+        commands = []
+        if self._replica_command:
+            commands.append(self._replica_command)
+        commands += [c for c in self.REPLICA_STATUS_COMMANDS if c not in commands]
+
+        last_err = None
+        for command in commands:
+            try:
+                result = self._query_status(command)
+                self._replica_command = command
+                return result, None
+            except pymysql.err.OperationalError as err:
+                last_err = err
+                # 1064: SQL 語法錯誤 / 1047: unknown command
+                # 代表這個 MySQL 版本不支援此指令（例如 8.4 已移除 SHOW SLAVE STATUS），改嘗試下一個
+                if err.args and err.args[0] in (1064, 1047) and command != commands[-1]:
+                    self.logger.debug(f'{self.hostname} 指令「{command}」不支援 ({err})，改嘗試其他指令')
+                    continue
+                self.logger.error(f'{self.hostname} 主機連線異常 錯誤代碼 {err.args[0]}: {err.args[1] if len(err.args) > 1 else err}')
+                return None, f'OperationalError {err.args[0]}: {err.args[1] if len(err.args) > 1 else err}'
+            except Exception as err:
+                last_err = err
+                self.logger.error(err, exc_info=True)
+                return None, str(err)
+        self.logger.error(f'{self.hostname} 無法取得 replica 狀態，所有指令皆失敗: {last_err}')
+        return None, (str(last_err) if last_err else '未知的 slave 狀態查詢錯誤')
+
+    def _notify(self, msg: str):
+        self.logger.info(msg)
+        if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
+            send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
+
+    def _build_status_message(self, status: dict) -> tuple:
+        """組出告警訊息內容，並帶出延遲秒數/最後錯誤等診斷資訊（若該版本有回傳）
+
+        Returns:
+            tuple: (msg, io_running, sql_running)
+        """
+        io_running = status.get('Replica_IO_Running', status.get('Slave_IO_Running'))
+        sql_running = status.get('Replica_SQL_Running', status.get('Slave_SQL_Running'))
+        seconds_behind = status.get('Seconds_Behind_Source', status.get('Seconds_Behind_Master'))
+        last_io_error = status.get('Last_IO_Error') or None
+        last_sql_error = status.get('Last_SQL_Error') or None
+
+        lines = [f'IO_Running: {io_running}', f'SQL_Running: {sql_running}']
+        if seconds_behind is not None:
+            lines.append(f'延遲秒數(Seconds_Behind): {seconds_behind}')
+        if last_io_error:
+            lines.append(f'Last_IO_Error: {last_io_error}')
+        if last_sql_error:
+            lines.append(f'Last_SQL_Error: {last_sql_error}')
+
+        msg = f'\n{self.hostname}  replica同步狀態:\n' + '\n'.join(lines)
+        return msg, io_running, sql_running
 
     def run(self):
         while True:
             try:
-                status = self.get_slave_status()
-                self.logger.debug(f'\nflag: {self.flag}\nstatus: {status}')
-                if status != None:
-                    if self.mysql_version >= (8, 4, 0):
-                        io_running = status.get("Replica_IO_Running")
-                        sql_running = status.get("Replica_SQL_Running")
-                    else:
-                        io_running = status.get("Slave_IO_Running")
-                        sql_running = status.get("Slave_SQL_Running")
-                    msg = f'\n{self.hostname}  replica同步狀態:\nIO_Running: {io_running}\nSQL_Running: {sql_running}'
+                status, err_detail = self.get_slave_status()
+                self.logger.debug(f'\nflag: {self.flag}\nstatus: {status}\nerr: {err_detail}')
+
+                if status is not None:
+                    msg, io_running, sql_running = self._build_status_message(status)
+
                     if io_running == 'Yes' and sql_running == 'Yes':
+                        self._consecutive_abnormal = 0
                         if self.flag != 'normal':
                             self.flag = 'normal'
-                            self.logger.info(msg)
-                            if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
-                                send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
-                    elif io_running == 'No' and sql_running == 'Yes':
-                        if self.flag != 'error-IO-running':
-                            self.flag = 'error-IO-running'
-                            self.logger.info(msg)
-                            if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
-                                send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
-                    elif io_running == 'Yes' and sql_running == 'No':
-                        if self.flag != 'error-SQL-running':
-                            self.flag = 'error-SQL-running'
-                            self.logger.info(msg)
-                            if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
-                                send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
+                            self._notify(msg)
                     else:
-                        if self.flag != 'error-no-running':
-                            self.flag = 'error-no-running'
-                            self.logger.info(msg)
-                            if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
-                                send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
+                        if io_running == 'No' and sql_running == 'Yes':
+                            new_flag = 'error-IO-running'
+                        elif io_running == 'Yes' and sql_running == 'No':
+                            new_flag = 'error-SQL-running'
+                        else:
+                            new_flag = 'error-no-running'
+
+                        self._consecutive_abnormal += 1
+                        if self._consecutive_abnormal >= self.ANOMALY_THRESHOLD:
+                            if self.flag != new_flag:
+                                self.flag = new_flag
+                                self._notify(msg)
+                        else:
+                            self.logger.warning(
+                                f'{self.hostname} 偵測到疑似同步異常'
+                                f'（第 {self._consecutive_abnormal}/{self.ANOMALY_THRESHOLD} 次，尚未達告警門檻，先觀察不發送告警）\n{msg}'
+                            )
                 else:
-                    if self.flag != 'error':
-                        self.flag = 'error'
-                        msg = f'{self.hostname}: MySQL replica同步異常'
-                        self.logger.error(msg)
-                        if TELEGRAM_API_KEY and TELEGRAM_CHAT_ID:
-                            send_tg_message(msg, TELEGRAM_API_KEY, TELEGRAM_CHAT_ID)
+                    self._consecutive_abnormal += 1
+                    if self._consecutive_abnormal >= self.ANOMALY_THRESHOLD:
+                        if self.flag != 'error':
+                            self.flag = 'error'
+                            msg = f'{self.hostname}: MySQL replica同步異常\n原因: {err_detail or "未知"}'
+                            self._notify(msg)
+                    else:
+                        self.logger.warning(
+                            f'{self.hostname} 查詢 replica 狀態失敗'
+                            f'（第 {self._consecutive_abnormal}/{self.ANOMALY_THRESHOLD} 次，尚未達告警門檻）: {err_detail}'
+                        )
+
                 self.logger.debug(f'{self.hostname} 監控間隔時間: {get_time_int_str(self.sleep_sec)}')
-                sleep(self.sleep_sec)
             except Exception as err:
-                self.logger.error(err, exc_info=True)
-                break
+                # 任何未預期例外都不應該讓這台主機的監控執行緒永久終止；
+                # 記錄錯誤後於下一輪繼續監控，而不是 break 離開迴圈導致該主機從此不再被監控
+                self.logger.error(f'{self.hostname} 監控迴圈發生未預期例外: {err}', exc_info=True)
+            sleep(self.sleep_sec)
 
 
 class MySQLClusterWatch(MySQLSetting):
@@ -243,36 +294,34 @@ class MySQLClusterWatch(MySQLSetting):
     def __init__(self, user: str, password: str, database: str, ip: str = '127.0.0.1', port: int = 3306, **kwargs) -> None:
         super().__init__(user, password, database, ip, port, **kwargs)
         self.logger = kwargs.get('logger')
-        if self.logger == None:
+        if self.logger is None:
             self.logger = logging.getLogger('MySQLClusterWatch')
 
-    def get_cluster_status(self):
-        # 連接 MySQL Cluster
+    def get_cluster_status(self) -> list:
+        """查詢 Group Replication 狀態
+
+        Returns:
+            list: 查詢結果，失敗時回傳空 list
+        """
+        conn = None
         try:
-            connection = MysqlConnect(**self.config)
-            if connection.is_connected():
-                self.logger.info('Connected to MySQL Cluster')
-                cursor = connection.cursor(dictionary=True)
-                cursor.execute("SHOW STATUS LIKE 'group_replication%'")
-                cluster_status = cursor.fetchall()
-                return cluster_status
+            conn = MysqlConnect(**self.config, logger=self.logger, name=f'{self.hostname} cluster status').get_mysql_connect()
+            cursor = conn.cursor()
+            cursor.execute("SHOW STATUS LIKE 'group_replication%'")
+            return cursor.fetchall()
         except Exception as err:
             self.logger.error(err, exc_info=True)
+            return []
         finally:
-            # 確保關閉連接
-            if 'connection' in locals() and connection.is_connected():
-                cursor.close()
-                connection.close()
-                self.logger.info(f'{connection.name} MySQL connection closed')
+            if conn is not None:
+                conn.close()
 
     def run(self):
-
         while True:
             try:
                 cluster_status = self.get_cluster_status()
                 for status in cluster_status:
                     self.logger.debug(f'{self.hostname}\n{pformat(status)}監控間隔時間: {get_time_int_str(self.sleep_sec)}')
-                sleep(self.sleep_sec)
             except Exception as err:
                 self.logger.error(err, exc_info=True)
-                break
+            sleep(self.sleep_sec)
